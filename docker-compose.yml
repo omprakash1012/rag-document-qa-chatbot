@@ -1,0 +1,10 @@
+services:
+  rag-api:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      # persist the FAISS index across container restarts/rebuilds
+      - ./vectorstore:/app/vectorstore
