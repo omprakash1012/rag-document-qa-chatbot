@@ -1,15 +1,39 @@
 # RAG-Based Document Q&A Chatbot
 
+![CI](https://github.com/omprakash1012/rag-document-qa-chatbot/actions/workflows/ci.yml/badge.svg)
+
 A Retrieval-Augmented Generation (RAG) pipeline that answers questions over a
 document set with grounded, cited answers — instead of manually searching
 through PDFs, markdown files, or handbooks.
 
-**Stack:** Python · LangChain · OpenAI API · FAISS · FastAPI
+**Stack:** Python · LangChain · OpenAI API · FAISS · FastAPI · Docker · pytest · GitHub Actions
 
 ## Problem
 
 Manually searching through large document sets (handbooks, FAQs, policy
 docs) is slow and produces inconsistent answers depending on who's looking.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph ingest["Ingestion — ingest.py"]
+        A["docs/ (.txt / .md / .pdf)"] --> B["RecursiveCharacterTextSplitter\n800 chars / 120 overlap"]
+        B --> C["Embeddings\n(OpenAI → HF → TF-IDF fallback)"]
+        C --> D[("FAISS index\nvectorstore/")]
+    end
+
+    subgraph query["Query — rag_chain.py"]
+        E["User question"] --> F["Embed query"]
+        F --> D
+        D --> G["Top-k relevant chunks"]
+        G --> H{"OPENAI_API_KEY set?"}
+        H -- yes --> I["LLM generates a cited answer"]
+        H -- no --> J["Return top chunk\n(mode: retrieval-only)"]
+    end
+
+    K["app.py — FastAPI /query"] --> E
+```
 
 ## Approach
 
@@ -19,10 +43,18 @@ docs) is slow and produces inconsistent answers depending on who's looking.
 2. **Retrieval + generation** (`rag_chain.py`): embeds the user's question,
    retrieves the top-k most relevant chunks from FAISS, and passes them to
    an LLM with a grounding prompt that requires citing the source file and
-   refuses to answer if the context doesn't contain the answer.
-3. **API** (`app.py`): exposes `/query` as a FastAPI REST endpoint so the
-   pipeline can be integrated into any front end or internal tool.
-4. Tuned chunk size and retrieval `k` empirically to balance answer
+   refuses to answer if the context doesn't contain the answer. If no LLM
+   is configured, it returns the top retrieved chunk directly instead of
+   failing (see [Running without an OpenAI key](#running-without-an-openai-key)).
+3. **API** (`app.py`): exposes `/query` and `/health` as a FastAPI REST
+   endpoint so the pipeline can be integrated into any front end or
+   internal tool. Containerized with `Dockerfile` / `docker-compose.yml`.
+4. **Evaluation** (`eval.py`): a labeled retrieval-quality harness — see
+   [Evaluation](#evaluation) below for real numbers, not just a claim.
+5. **Testing & CI** (`tests/`, `.github/workflows/ci.yml`): pytest suite
+   covering chunking, the TF-IDF fallback, and the retrieval pipeline,
+   run automatically on every push via GitHub Actions.
+6. Tuned chunk size and retrieval `k` empirically to balance answer
    relevance against latency and token cost.
 
 ## Results
@@ -32,56 +64,46 @@ docs) is slow and produces inconsistent answers depending on who's looking.
 - Improved answer relevance by ~20% after iterating on chunk size and
   prompt structure (grounding + citation instructions).
 
-## Project structure
+## Evaluation
+
+`eval.py` runs a labeled set of 10 questions (5 per source document) against
+the live FAISS index and reports Hit Rate@k and Mean Reciprocal Rank — does
+retrieval actually surface the correct source document, and how highly does
+it rank it. This checks retrieval quality specifically, not generated-answer
+quality (that would need an LLM-as-judge and an API key).
+
+Real run against this repo's sample docs, TF-IDF fallback, no network access:
 
 ```
-rag-document-qa-chatbot/
+$ python eval.py --k 1
+Hit Rate@1: 100% (10/10)
+Mean Reciprocal Rank: 1.0
+```
 
-A Retrieval-Augmented Generation (RAG) pipeline that answers questions over a
-document set with grounded, cited answers — instead of manually searching
-through PDFs, markdown files, or handbooks.
-
-**Stack:** Python · LangChain · OpenAI API · FAISS · FastAPI
-
-## Problem
-
-Manually searching through large document sets (handbooks, FAQs, policy
-docs) is slow and produces inconsistent answers depending on who's looking.
-
-## Approach
-
-1. **Ingestion** (`ingest.py`): loads `.txt`/`.md`/`.pdf` files from `docs/`,
-   chunks them with a recursive splitter (800 chars, 120 overlap), embeds
-   each chunk, and persists a FAISS vector index.
-2. **Retrieval + generation** (`rag_chain.py`): embeds the user's question,
-   retrieves the top-k most relevant chunks from FAISS, and passes them to
-   an LLM with a grounding prompt that requires citing the source file and
-   refuses to answer if the context doesn't contain the answer.
-3. **API** (`app.py`): exposes `/query` as a FastAPI REST endpoint so the
-   pipeline can be integrated into any front end or internal tool.
-4. Tuned chunk size and retrieval `k` empirically to balance answer
-   relevance against latency and token cost.
-
-## Results
-
-- Reduced document lookup time by ~35% versus manual search in informal
-  testing against the sample doc set.
-- Improved answer relevance by ~20% after iterating on chunk size and
-  prompt structure (grounding + citation instructions).
+This is a small, cleanly-separated 2-document eval set, so 100%/1.0 mainly
+demonstrates the harness works correctly end-to-end — it isn't a claim about
+retrieval accuracy at production scale. Point `eval.py` at a larger, messier
+`docs/` folder to get a meaningful benchmark; the methodology (labeled
+question → expected source, hit rate + MRR) stays the same.
 
 ## Project structure
 
 ```
 rag-document-qa-chatbot/
-├── docs/                      # sample source documents (handbook, FAQ)
-├── ingest.py                  # chunk + embed + build FAISS index
-├── rag_chain.py                # retrieval + generation logic
-├── embeddings_provider.py      # pluggable OpenAI / HF / local embeddings
-├── local_tfidf_embeddings.py   # fully offline TF-IDF+SVD fallback
-├── app.py                      # FastAPI backend
+├── .github/workflows/ci.yml    # pytest on every push (GitHub Actions)
+├── docs/                       # sample source documents (handbook, FAQ)
+├── tests/                      # pytest suite (chunking, embeddings, retrieval)
+├── ingest.py                   # chunk + embed + build FAISS index
+├── rag_chain.py                 # retrieval + generation logic
+├── eval.py                      # retrieval evaluation harness (Hit Rate@k, MRR)
+├── embeddings_provider.py       # pluggable OpenAI / HF / local embeddings
+├── local_tfidf_embeddings.py    # fully offline TF-IDF+SVD fallback
+├── app.py                       # FastAPI backend
+├── Dockerfile
+├── docker-compose.yml
 ├── requirements.txt
 ├── .env.example
-└── vectorstore/                 # generated FAISS index (gitignored)
+└── vectorstore/                  # generated FAISS index (gitignored)
 ```
 
 ## Getting started
@@ -102,6 +124,33 @@ curl -X POST localhost:8000/query \
   -H "Content-Type: application/json" \
   -d '{"question": "How many days of PTO do employees get?"}'
 ```
+
+## Testing
+
+```bash
+pytest tests/ -v
+```
+
+11 tests covering `chunk_documents` (splitting/overlap behavior), the
+`TfidfEmbeddings` fallback (vector shape, persistence/reload), and
+`RAGPipeline` (retrieval correctness, the no-API-key fallback path, missing
+index handling). They're network-free — the retrieval tests build a small
+real FAISS index in a temp dir and monkeypatch `get_embeddings` to a fixed
+`TfidfEmbeddings` instance, so they pass deterministically whether or not a
+HuggingFace download or OpenAI key is available. This is also what
+`.github/workflows/ci.yml` runs on every push.
+
+## Running with Docker
+
+```bash
+docker compose build
+docker compose run rag-api python ingest.py   # build the index once
+docker compose up                              # serve on localhost:8000
+```
+
+The image doesn't bake in a pre-built index (docs change per deployment), so
+run `ingest.py` inside the container once before serving — `vectorstore/` is
+mounted as a volume so the index persists across restarts.
 
 ## Running without an OpenAI key
 
