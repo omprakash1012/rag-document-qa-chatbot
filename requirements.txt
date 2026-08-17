@@ -12,3 +12,4 @@ tiktoken>=0.7.0
 sentence-transformers>=2.7.0
 scikit-learn>=1.3.0
 pydantic>=2.7.0
+pytest>=7.0.0
