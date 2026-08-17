@@ -1,9 +1,7 @@
 __pycache__/
 *.pyc
 .env
+vectorstore/
 .venv/
-venv/
-data/
-faiss_index/
-*.log
-.DS_Store
+reports/
+.pytest_cache/
