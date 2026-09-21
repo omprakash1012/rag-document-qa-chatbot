@@ -25,7 +25,23 @@ Answer concisely, and cite the source filename(s) you used in square brackets, e
 
 
 class RAGPipeline:
+    """Retrieval-augmented pipeline: loads a persisted FAISS index and turns
+    a user question into a grounded answer with cited source filenames.
+
+    Falls back to plain retrieval (no generation) when no LLM/API key is
+    configured, so the pipeline still runs end-to-end without a paid API.
+    """
+
     def __init__(self, index_dir: str = "vectorstore", k: int = 4):
+        """Load the FAISS index built by ingest.py.
+
+        Args:
+            index_dir: Directory containing the persisted FAISS index.
+            k: Number of chunks to retrieve per query.
+
+        Raises:
+            FileNotFoundError: If index_dir doesn't exist yet.
+        """
         if not os.path.exists(index_dir):
             raise FileNotFoundError(
                 f"No index found at {index_dir}. Run `python ingest.py` first."
@@ -38,10 +54,13 @@ class RAGPipeline:
         self.prompt = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
 
     def retrieve(self, query: str):
+        """Return the top-k document chunks most relevant to query."""
         docs = self.retriever.invoke(query)
         return docs
 
     def _format_context(self, docs):
+        """Join retrieved chunks into a single prompt-ready context string,
+        prefixing each chunk with its source filename in brackets."""
         parts = []
         for d in docs:
             src = os.path.basename(d.metadata.get("source", "unknown"))
@@ -49,6 +68,13 @@ class RAGPipeline:
         return "\n\n---\n\n".join(parts)
 
     def answer(self, query: str):
+        """Answer query using retrieved context.
+
+        Returns a dict with 'answer', the sorted list of source filenames
+        used, and 'mode' -- "generated" when an LLM produced the answer, or
+        "retrieval-only" when falling back to the top retrieved excerpt
+        because no LLM is configured.
+        """
         docs = self.retrieve(query)
         context = self._format_context(docs)
         sources = sorted({os.path.basename(d.metadata.get("source", "")) for d in docs})
