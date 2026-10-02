@@ -26,6 +26,16 @@ LOADER_MAP = {
 
 
 def load_documents(docs_dir: str):
+    """Load every .txt, .md, and .pdf file under docs_dir into LangChain Documents.
+
+    Args:
+        docs_dir: Path to the directory to scan. Searched non-recursively per
+            extension via one DirectoryLoader per entry in LOADER_MAP.
+
+    Returns:
+        A flat list of loaded Document objects, grouped by extension in the
+        order LOADER_MAP defines (all .txt, then all .md, then all .pdf).
+    """
     documents = []
     for ext, loader_cls in LOADER_MAP.items():
         loader = DirectoryLoader(
@@ -36,6 +46,18 @@ def load_documents(docs_dir: str):
 
 
 def chunk_documents(documents, chunk_size=800, chunk_overlap=120):
+    """Split documents into overlapping chunks sized for embedding.
+
+    Args:
+        documents: List of Document objects to split, e.g. from load_documents().
+        chunk_size: Target chunk length in characters.
+        chunk_overlap: Number of characters shared between consecutive chunks,
+            so context isn't lost at chunk boundaries.
+
+    Returns:
+        A list of Document chunks, each inheriting its source document's metadata
+        (including the source filename used for citations later in rag_chain.py).
+    """
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
@@ -45,6 +67,18 @@ def chunk_documents(documents, chunk_size=800, chunk_overlap=120):
 
 
 def build_index(docs_dir: str, index_dir: str):
+    """Run the full ingestion pipeline: load, chunk, embed, and persist a FAISS index.
+
+    Args:
+        docs_dir: Directory containing the source .txt/.md/.pdf files.
+        index_dir: Directory to write the FAISS index to (created if it
+            doesn't exist). Also forwarded to get_embeddings(), which uses it
+            as the path to persist the local TF-IDF fallback's fitted
+            vectorizer when no OpenAI key or downloadable model is available.
+
+    Raises:
+        ValueError: If no supported files are found in docs_dir.
+    """
     print(f"Loading documents from {docs_dir}...")
     documents = load_documents(docs_dir)
     if not documents:
