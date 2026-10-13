@@ -15,8 +15,23 @@ best available option for whatever environment it's running in.
 """
 import os
 
-
 def get_embeddings(index_dir: str = "vectorstore"):
+    """Return an embeddings provider, falling back through three tiers.
+
+    Tries OpenAI embeddings first (if OPENAI_API_KEY is set), then a local
+    HuggingFace sentence-transformers model, and finally a fully offline
+    TF-IDF + SVD embedding (local_tfidf_embeddings.py) if neither of the
+    above is available or reachable.
+
+    Args:
+        index_dir: Directory used by the TF-IDF fallback to persist its
+            fitted vectorizer/SVD, so embed_query can reload it later
+            without re-embedding the whole document set.
+
+    Returns:
+        A LangChain-compatible embeddings object exposing
+        embed_documents()/embed_query().
+    """
     if os.getenv("OPENAI_API_KEY"):
         from langchain_openai import OpenAIEmbeddings
         return OpenAIEmbeddings(model="text-embedding-3-small")
@@ -28,11 +43,22 @@ def get_embeddings(index_dir: str = "vectorstore"):
         print(f"HuggingFace embeddings unavailable ({e.__class__.__name__}), "
               f"falling back to local TF-IDF embeddings.")
 
-    from local_tfidf_embeddings import TfidfEmbeddings
-    return TfidfEmbeddings(vectorizer_path=os.path.join(index_dir, "tfidf.pkl"))
-
+        from local_tfidf_embeddings import TfidfEmbeddings
+        return TfidfEmbeddings(vectorizer_path=os.path.join(index_dir, "tfidf.pkl"))
 
 def get_llm(temperature: float = 0.0):
+    """Return a chat LLM for answer generation.
+
+    Args:
+        temperature: Sampling temperature passed to the chat model.
+
+    Returns:
+        A LangChain-compatible chat model instance.
+
+    Raises:
+        RuntimeError: If OPENAI_API_KEY is not set, since answer generation
+            currently requires OpenAI's API (retrieval works without it).
+    """
     if os.getenv("OPENAI_API_KEY"):
         from langchain_openai import ChatOpenAI
         return ChatOpenAI(model="gpt-4o-mini", temperature=temperature)
