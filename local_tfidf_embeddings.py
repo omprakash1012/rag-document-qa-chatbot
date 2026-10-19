@@ -28,6 +28,19 @@ class TfidfEmbeddings(Embeddings):
         self.svd: TruncatedSVD | None = None
 
     def _fit(self, texts: list[str]):
+        """Fit the TF-IDF vectorizer and SVD reducer on a batch of texts.
+
+        Builds a TF-IDF matrix over `texts`, then reduces it to a dense
+        vector space via truncated SVD. If `vectorizer_path` is set, the
+        fitted vectorizer and SVD model are pickled there so a later
+        process can call `embed_query` without re-fitting.
+
+        Args:
+            texts: Document chunks to fit the vectorizer on.
+
+        Returns:
+            A dense (n_texts, n_components) array of embeddings.
+        """
         self.vectorizer = TfidfVectorizer(stop_words="english", max_features=5000)
         tfidf = self.vectorizer.fit_transform(texts)
 
@@ -43,16 +56,42 @@ class TfidfEmbeddings(Embeddings):
         return vectors
 
     def _load(self):
+        """Load a previously fitted vectorizer and SVD model from disk.
+
+        Reads the pickle written by `_fit` at `vectorizer_path` and
+        restores `self.vectorizer` and `self.svd` so `embed_query`
+        can run in a fresh process without re-fitting on the corpus.
+        """
         with open(self.vectorizer_path, "rb") as f:
             data = pickle.load(f)
         self.vectorizer = data["vectorizer"]
         self.svd = data["svd"]
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        """Fit on and embed a batch of documents (LangChain interface).
+
+        Args:
+            texts: Document chunks to embed.
+
+        Returns:
+            One embedding vector (as a list of floats) per input text.
+        """
         vectors = self._fit(texts)
         return vectors.tolist()
 
     def embed_query(self, text: str) -> list[float]:
+        """Embed a single query string using the fitted model.
+
+        Loads the vectorizer/SVD from `vectorizer_path` first if this
+        instance hasn't fit or loaded one yet (e.g. a fresh process that
+        only needs to embed queries against an index built earlier).
+
+        Args:
+            text: The query string to embed.
+
+        Returns:
+            The query's embedding vector as a list of floats.
+        """
         if self.vectorizer is None or self.svd is None:
             self._load()
         tfidf = self.vectorizer.transform([text])
