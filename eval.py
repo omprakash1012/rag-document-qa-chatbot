@@ -30,8 +30,24 @@ EVAL_SET = [
     {"question": "How is my data backed up?", "expected_source": "product_faq.md"},
 ]
 
-
 def evaluate(index_dir: str, k: int):
+    """Run the labeled eval set against a persisted FAISS index and score retrieval quality.
+
+    For each question in EVAL_SET, retrieves the top-k chunks and checks
+    whether the expected source file appears among them (and at what rank),
+    then aggregates the per-question results into Hit Rate@k and Mean
+    Reciprocal Rank (MRR) across the full set.
+
+    Args:
+        index_dir: Directory containing the persisted FAISS index (built by
+            ingest.py).
+        k: Number of chunks to retrieve per question.
+
+    Returns:
+        A dict with 'k', 'n_questions', 'hit_rate_at_k',
+        'mean_reciprocal_rank', and 'per_question' (a list of per-question
+        hit/rank/retrieved_sources records).
+    """
     rag = RAGPipeline(index_dir=index_dir, k=k)
 
     per_question = []
@@ -70,7 +86,6 @@ def evaluate(index_dir: str, k: int):
     }
     return results
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--index-dir", default="vectorstore")
@@ -86,7 +101,7 @@ if __name__ == "__main__":
     print()
     for q in results["per_question"]:
         status = "HIT " if q["hit"] else "MISS"
-        print(f"[{status}] rank={q['rank']}  {q['question']!r} -> expected {q['expected_source']}, "
+        print(f"[{status}] rank={q['rank']} {q['question']!r} -> expected {q['expected_source']}, "
               f"got {q['retrieved_sources']}")
 
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
